@@ -1,0 +1,6 @@
+interface:
+  display_name: "FRAME Commit"
+  short_description: "Review all local changes, then confirm commit and push"
+  default_prompt: "Use $frame-commit for all local uncommitted changes, draft the commit message and push destination, then wait for my confirmation before committing and pushing."
+policy:
+  allow_implicit_invocation: true

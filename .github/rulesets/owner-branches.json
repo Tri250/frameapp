@@ -1,0 +1,14 @@
+{
+  "name": "contributor-page-owner-branches",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [
+    {"actor_id": 13145342, "actor_type": "User", "bypass_mode": "always"}
+  ],
+  "conditions": {"ref_name": {"include": ["refs/heads/owner-*"], "exclude": []}},
+  "rules": [
+    {"type": "creation"},
+    {"type": "update"},
+    {"type": "deletion"}
+  ]
+}

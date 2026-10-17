@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: pub
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # permission_handler 13 requires Android SDK 37 and a matching Android
+    # Gradle toolchain. Upgrade it deliberately with the Android build change.
+    ignore:
+      - dependency-name: permission_handler
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      android-build-toolchain:
+        patterns:
+          - "com.android.application"
+          - "org.jetbrains.kotlin.android"
+          - "gradle-wrapper"

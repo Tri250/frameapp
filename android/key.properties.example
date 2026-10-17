@@ -1,0 +1,8 @@
+# Independent distributors configure their own release signing.
+# Local development uses debug signing and does not need this file.
+# Copy this file to android/key.properties and replace every value.
+# Keep android/key.properties and the keystore file private; both are ignored by Git.
+storePassword=REPLACE_WITH_KEYSTORE_PASSWORD
+keyPassword=REPLACE_WITH_KEY_PASSWORD
+keyAlias=REPLACE_WITH_KEY_ALIAS
+storeFile=/absolute/path/to/your-release.jks
