@@ -7,7 +7,7 @@
 ## 三步拍照
 
 | 1. 点选主体 | 2. 比较构图 | 3. 对齐拍照 |
-| --- | --- | --- |
+| :---: | :---: | :---: |
 | <img src="images/select-subject.png" width="220" alt="点选主体"> | <img src="images/composition-advice.png" width="220" alt="查看构图建议"> | <img src="images/align-and-shoot.png" width="220" alt="主体对齐后拍照"> |
 | 点击想拍的对象，白框表示正在跟踪。 | 查看推荐、理由和备选方案。 | 让绿圈中心留在主体选框内一秒，再按快门；允许框内轻微手抖。 |
 
@@ -21,7 +21,7 @@
 - 保存不含引导线的 3:4 PNG 照片。保存失败时，只要当前照片仍在内存，就可以重试。
 - 使用内置样片练习；浏览器中可拖动场景或自动对齐，再下载拍摄结果。
 
-<p align="center">
+<p align="left">
   <img src="images/six-compositions.png" width="250" alt="六种构图选项">
   <img src="images/photo-guide.png" width="250" alt="应用内三步拍照指南">
 </p>
