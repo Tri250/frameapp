@@ -10,11 +10,8 @@
 
 | 平台 | 下载入口 |
 | --- | --- |
-| Android | 待补充 APK 下载链接 |
-| iOS | 待补充安装或 TestFlight 链接 |
-
-<!-- Replace these placeholders only when a verified build is available. -->
-暂无可用下载链接；可按下方步骤自行运行。
+| Android | [下载原生体验 APK · 0.1.13](https://github.com/lianjiehao/frameapp/releases/download/v0.1.13-test.1/frame-android-0.1.13.apk)  |
+| iOS | 暂无公开安装渠道，开发者可在本机安装调试，或通过 App Store 发布。 |
 
 ## 快速开始
 
