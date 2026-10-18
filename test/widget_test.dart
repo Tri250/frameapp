@@ -388,6 +388,149 @@ void main() {
     );
   }
   testWidgets(
+    'timed shutter cycles, counts down while ready, cancels on a second tap or lost readiness, and fires through the ready gate',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final frames = StreamController<GrayFrame>();
+      final sensors = StreamController<AccelerometerEvent>();
+      Uint8List? saved;
+      final coach = CameraCoach(
+        demo: true,
+        previewFrames: frames.stream,
+        levelEvents: sensors.stream,
+        now: tester.binding.clock.now,
+        saver: (bytes, _) async => saved = bytes,
+      );
+      await tester.pumpWidget(
+        FrameApp(
+          coach: coach,
+          permissionBackend: TestPermissions()..photos = true,
+        ),
+      );
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 300)),
+      );
+      await tick(tester, 300);
+      void sensor({bool shaking = false}) {
+        final scale = shaking ? 1.6 : 1.0;
+        sensors.add(
+          AccelerometerEvent(
+            1.04 * scale,
+            9.16 * scale,
+            -3.35 * scale,
+            tester.binding.clock.now(),
+          ),
+        );
+      }
+
+      Future<void> feed() async {
+        sensor();
+        frames.add(treeView(panX: 14, panY: -3));
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 120)),
+        );
+        await tick(tester, 200);
+      }
+
+      // A live camera keeps delivering frames during a countdown, so every
+      // simulated second feeds four fresh frames before crossing the tick
+      // deadline. Frameless gaps trip the stale-frame watchdog and revoke
+      // readiness, which is the intended contract, not a bug.
+      Future<void> liveSecond() async {
+        for (int i = 0; i < 4; i++) {
+          await feed();
+        }
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+
+      await feed();
+      coach.selectSubject(const Point2(.5, .5));
+      await feed();
+      await tester.tap(find.byKey(const Key('confirm-scene')));
+      await tick(tester, 400);
+      coach.choosePlan(
+        coach.plans.firstWhere((p) => p.kind == CompositionKind.centered),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const Key('start-guidance')));
+      for (int i = 0; i < 7; i++) {
+        await feed();
+      }
+      expect(coach.phase, CapturePhase.ready, reason: coach.alignment.message);
+      // Off → 3s → 10s → off cycle, independent of the live countdown.
+      await tester.tap(find.byKey(const Key('countdown-toggle')));
+      await tester.pump();
+      expect(coach.countdownSeconds, 3);
+      await tester.tap(find.byKey(const Key('countdown-toggle')));
+      await tester.pump();
+      expect(coach.countdownSeconds, 10);
+      await tester.tap(find.byKey(const Key('countdown-toggle')));
+      await tester.pump();
+      expect(coach.countdownSeconds, 0);
+      await tester.tap(find.byKey(const Key('countdown-toggle')));
+      await tester.pump();
+      expect(coach.countdownSeconds, 3);
+      // Starting the countdown shows the overlay and steps once per second.
+      await tester.tap(find.byKey(const Key('shutter')));
+      await tester.pump();
+      expect(coach.countdownRemaining, 3);
+      expect(find.byKey(const Key('countdown-overlay')), findsOneWidget);
+      await liveSecond();
+      expect(coach.countdownRemaining, 2);
+      await liveSecond();
+      expect(coach.countdownRemaining, 1);
+      expect(find.byKey(const Key('countdown-overlay')), findsOneWidget);
+      // A second shutter tap cancels without taking a photograph.
+      await tester.tap(find.byKey(const Key('shutter')));
+      await tester.pump();
+      expect(coach.countdownRemaining, isNull);
+      expect(coach.phase, CapturePhase.ready);
+      expect(saved, isNull);
+      // Losing readiness during the countdown stops it.
+      await tester.tap(find.byKey(const Key('shutter')));
+      await tester.pump();
+      expect(coach.countdownRemaining, 3);
+      sensor(shaking: true);
+      await tester.pump();
+      expect(coach.phase, CapturePhase.guiding);
+      await tester.pump(const Duration(seconds: 1));
+      expect(coach.countdownRemaining, isNull);
+      // The fired timer still passes the normal ready gate before capturing.
+      for (int i = 0; i < 10; i++) {
+        await feed();
+      }
+      expect(coach.phase, CapturePhase.ready, reason: coach.alignment.message);
+      await tester.tap(find.byKey(const Key('shutter')));
+      await tester.pump();
+      expect(coach.countdownRemaining, 3);
+      await liveSecond();
+      expect(coach.countdownRemaining, 2);
+      await liveSecond();
+      expect(coach.countdownRemaining, 1);
+      await liveSecond();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 200)),
+      );
+      await tick(tester, 400);
+      expect(coach.countdownRemaining, isNull);
+      expect(coach.phase, CapturePhase.captured);
+      expect(coach.saved, true);
+      expect(saved!.take(8), [137, 80, 78, 71, 13, 10, 26, 10]);
+      expect(coach.shotFeedback, isNotNull);
+      expect(coach.shotFeedback!.score, greaterThan(0));
+      await tester.pump();
+      expect(find.byKey(const Key('shot-feedback')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      unawaited(frames.close());
+      unawaited(sensors.close());
+      await tester.pump();
+    },
+  );
+  testWidgets(
     'recommendation requires a user-selected live subject and a new selection after reset',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);

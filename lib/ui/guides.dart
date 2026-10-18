@@ -148,6 +148,9 @@ class GuidePainter extends CustomPainter {
       }
     }
     if (subjectTracked && subjectPosition != null) {
+      // The frame style reports live tracking confidence: solid and bright
+      // while strong, dashed and faint while the lock is only recovering.
+      final confidence = features.subjectConfidence.clamp(0.0, 1.0);
       final p = at(subjectPosition!),
           r = Rect.fromCenter(
             center: p,
@@ -155,8 +158,11 @@ class GuidePainter extends CustomPainter {
             height: s.height * subjectGuideHeight,
           );
       final pen = Paint()
-        ..color = ready ? acid : paper
-        ..strokeWidth = 2;
+        ..color = (ready ? acid : paper).withValues(
+          alpha: .55 + .45 * confidence,
+        )
+        ..strokeWidth = confidence >= .6 ? 2 : 1.5
+        ..style = PaintingStyle.stroke;
       const l = 9.0;
       for (final corner in [
         (r.topLeft, 1.0, 1.0),
@@ -164,10 +170,54 @@ class GuidePainter extends CustomPainter {
         (r.bottomLeft, 1.0, -1.0),
         (r.bottomRight, -1.0, -1.0),
       ]) {
-        c.drawLine(corner.$1, corner.$1 + Offset(l * corner.$2, 0), pen);
-        c.drawLine(corner.$1, corner.$1 + Offset(0, l * corner.$3), pen);
+        final horizontal = (corner.$1, corner.$1 + Offset(l * corner.$2, 0));
+        final vertical = (corner.$1, corner.$1 + Offset(0, l * corner.$3));
+        if (confidence >= .6) {
+          c.drawLine(horizontal.$1, horizontal.$2, pen);
+          c.drawLine(vertical.$1, vertical.$2, pen);
+        } else {
+          dash(horizontal.$1, horizontal.$2, pen);
+          dash(vertical.$1, vertical.$2, pen);
+        }
       }
       c.drawCircle(p, 2.5, Paint()..color = pen.color);
+    }
+    // A direction cue shows how far the white box still has to travel toward
+    // the target; moving the phone the opposite way moves the box along it.
+    if (showGuides &&
+        plan != null &&
+        !plan!.useHorizon &&
+        subjectTracked &&
+        subjectPosition != null) {
+      final delta = at(plan!.target) - at(subjectPosition!);
+      final distance = delta.distance;
+      final dx = plan!.target.x - subjectPosition!.x,
+          dy = plan!.target.y - subjectPosition!.y;
+      if (distance > 1 &&
+          (dx.abs() > subjectGuideWidth / 2 ||
+              dy.abs() > subjectGuideHeight / 2)) {
+        final unit = delta / distance;
+        final half = Offset(
+          s.width * subjectGuideWidth / 2,
+          s.height * subjectGuideHeight / 2,
+        );
+        final edge = math.min(
+          unit.dx.abs() < 1e-6 ? double.infinity : half.dx / unit.dx.abs(),
+          unit.dy.abs() < 1e-6 ? double.infinity : half.dy / unit.dy.abs(),
+        );
+        final start = at(subjectPosition!) + unit * (edge + 3);
+        final end = at(plan!.target) - unit * 24;
+        if ((end - start).distance > 12) {
+          final arrow = Paint()
+            ..color = acid.withValues(alpha: .9)
+            ..strokeWidth = 1.8
+            ..style = PaintingStyle.stroke;
+          dash(start, end, arrow);
+          final back = end - unit * 9, wing = Offset(-unit.dy, unit.dx) * 5.5;
+          c.drawLine(end, back + wing, arrow);
+          c.drawLine(end, back - wing, arrow);
+        }
+      }
     }
   }
 
@@ -192,4 +242,76 @@ class DemoPhotoPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant DemoPhotoPainter old) =>
       old.source != source || old.image != image;
+}
+
+/// The one-second stable hold as a ring around the shutter button.
+class ShutterRingPainter extends CustomPainter {
+  ShutterRingPainter({required this.progress, required this.ready});
+  final double progress;
+  final bool ready;
+  @override
+  void paint(Canvas c, Size s) {
+    final center = s.center(Offset.zero);
+    final radius = math.min(s.width, s.height) / 2 - 3;
+    c.drawCircle(
+      center,
+      radius,
+      Paint()
+        ..color = paper.withValues(alpha: .18)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3,
+    );
+    final value = progress.clamp(0.0, 1.0);
+    if (value > 0) {
+      c.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        -math.pi / 2,
+        2 * math.pi * value,
+        false,
+        Paint()
+          ..color = ready ? acid : paper.withValues(alpha: .8)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant ShutterRingPainter old) =>
+      old.progress != progress || old.ready != ready;
+}
+
+/// A compact roll gauge beside the level label: the marker slides away from
+/// center as tilt grows. Purely advisory; roll never gates the shutter.
+class LevelGaugePainter extends CustomPainter {
+  LevelGaugePainter({required this.angle, required this.level});
+  final double? angle;
+  final bool level;
+  @override
+  void paint(Canvas c, Size s) {
+    final cy = s.height / 2;
+    final track = Paint()
+      ..color = paper.withValues(alpha: .28)
+      ..strokeWidth = 1;
+    c.drawLine(Offset(0, cy), Offset(s.width, cy), track);
+    final center = Offset(s.width / 2, cy);
+    c.drawLine(center - Offset(0, 3), center + Offset(0, 3), track);
+    final value = (angle ?? 0).clamp(-15.0, 15.0) / 15;
+    final marker = center + Offset(value * (s.width / 2 - 4), 0);
+    c.drawCircle(
+      marker,
+      3,
+      Paint()
+        ..color = angle == null
+            ? paper.withValues(alpha: .35)
+            : level
+            ? acid
+            : const Color(0xFFF4B66F),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant LevelGaugePainter old) =>
+      old.angle != angle || old.level != level;
 }

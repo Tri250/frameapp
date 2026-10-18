@@ -64,12 +64,26 @@ class SubjectTrackSnapshot {
     this.points,
     this.reference,
     this.scale,
+    this.misses,
   );
   final List<GrayFrame> pyramid;
   final Point2 anchor;
   final List<Point2> points;
   final SubjectTemplate? reference;
   final double scale;
+
+  /// Consecutive frames without a verified match. Only this counter advances on
+  /// a loss; anchor, points and reference keep the selected identity intact.
+  final int misses;
+
+  SubjectTrackSnapshot _withMiss() => SubjectTrackSnapshot._(
+    pyramid,
+    anchor,
+    points,
+    reference,
+    scale,
+    math.min(misses + 1, 3),
+  );
 
   static SubjectTrackSnapshot? capture(GrayFrame frame, Point2 anchor) {
     final points = _corners(frame, anchor, .14, .13);
@@ -93,15 +107,17 @@ class SubjectTrackSnapshot {
       points.take(24).toList(),
       reference,
       1,
+      0,
     );
   }
 
   SubjectTrackUpdate advance(GrayFrame frame) {
     if (frame.width != pyramid.first.width ||
         frame.height != pyramid.first.height) {
-      return SubjectTrackUpdate(null, 0, this);
+      return SubjectTrackUpdate(null, 0, _withMiss());
     }
     final current = _pyramid(frame), w = frame.width, h = frame.height;
+    final weak = _lowQuality(frame);
     final motion = _cameraMotion(pyramid.last, current.last);
     final factor = math.pow(2, pyramid.length - 1).toDouble();
     final predicted = Point2(motion.x * factor / w, motion.y * factor / h);
@@ -129,24 +145,29 @@ class SubjectTrackSnapshot {
             nextAnchor.x > 1 ||
             nextAnchor.y < 0 ||
             nextAnchor.y > 1) {
-          return SubjectTrackUpdate(null, 0, this);
+          return SubjectTrackUpdate(null, 0, _withMiss());
         }
         final inliers = pairs
             .where((pair) => model.apply(pair.$1).distanceTo(pair.$2) * h < 2)
             .toList();
         if (inliers.length >= 3 && inliers.length / pairs.length >= .6) {
+          // A weak frame (blur, broken exposure) earns less trust even when
+          // flow still verifies the movement.
           final confidence =
               (.55 + .4 * inliers.length / math.max(4, points.length)).clamp(
                 0.0,
                 .95,
-              );
+              ) *
+              (weak ? .9 : 1.0);
           final nextScale = (scale * model.size).clamp(.4, 2.5);
           var nextPoints = inliers.map((p) => p.$2).toList();
-          // Refresh texture only after a verified movement consensus. The fixed
-          // reference remains available for recovery and is never replaced.
-          if (inliers.length >= 5 &&
-              confidence >= .7 &&
-              nextPoints.length < 18) {
+          // Refresh texture only after a verified movement consensus, and never
+          // from a weak frame. The fixed reference remains available for
+          // recovery and is never replaced.
+          if (!weak &&
+              inliers.length >= 4 &&
+              confidence >= .6 &&
+              nextPoints.length < 20) {
             for (final p in _corners(
               frame,
               nextAnchor,
@@ -165,17 +186,26 @@ class SubjectTrackSnapshot {
             nextPoints,
             reference,
             nextScale,
+            0,
           );
           return SubjectTrackUpdate(nextAnchor, confidence, snapshot);
         }
       }
     }
-    // Recovery searches around camera-compensated position, including faster
-    // pans. A strict original appearance check guards against background drift.
+    // Recovery searches around the camera-compensated position, including
+    // faster pans. Consecutive misses widen the search and relax the gate step
+    // by step, while the strict original appearance check keeps guarding
+    // against background drift. A weak frame never gets the relaxed gate.
     if (reference != null) {
       final center = Point2(anchor.x + predicted.x, anchor.y + predicted.y);
-      final match = reference!.match(frame, center, searchRadius: .16);
-      if (match.point != null && match.confidence >= .72) {
+      final tier = weak ? 0 : math.min(misses, 2);
+      final match = reference!.match(
+        frame,
+        center,
+        searchRadius: const [.16, .21, .27][tier],
+      );
+      if (match.point != null &&
+          match.confidence >= const [.72, .66, .58][tier]) {
         final next = SubjectTrackSnapshot.capture(frame, match.point!);
         if (next != null) {
           return SubjectTrackUpdate(
@@ -187,12 +217,13 @@ class SubjectTrackSnapshot {
               next.points,
               reference,
               1,
+              0,
             ),
           );
         }
       }
     }
-    return SubjectTrackUpdate(null, 0, this);
+    return SubjectTrackUpdate(null, 0, _withMiss());
   }
 }
 
@@ -201,6 +232,25 @@ class SubjectTrackUpdate {
   final Point2? point;
   final double confidence;
   final SubjectTrackSnapshot snapshot;
+}
+
+/// Blur, a featureless wall or broken exposure make fresh corners and recovery
+/// matching unreliable. Flow may still run on such frames; the tracked identity
+/// never changes because of them.
+bool _lowQuality(GrayFrame f) {
+  double gradient = 0, brightness = 0;
+  int count = 0;
+  for (int y = 1; y < f.height - 1; y += 2) {
+    for (int x = 1; x < f.width - 1; x += 2) {
+      gradient +=
+          (f.at(x + 1, y) - f.at(x - 1, y)).abs() +
+          (f.at(x, y + 1) - f.at(x, y - 1)).abs();
+      brightness += f.at(x, y);
+      count++;
+    }
+  }
+  final mean = brightness / count;
+  return gradient / (2 * count) < .8 || mean < 24 || mean > 232;
 }
 
 List<Point2> _corners(GrayFrame f, Point2 center, double rx, double ry) {

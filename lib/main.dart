@@ -172,6 +172,21 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   bool get guiding =>
       coach.phase == CapturePhase.guiding || coach.phase == CapturePhase.ready;
+
+  /// Advisory hint from the measured brightness distribution. Never a gate.
+  String? get _sceneHint {
+    final e = coach.evidence;
+    if (e.meanBrightness == 0) return null;
+    if (e.meanBrightness < 55) return '光线不足，请稳住手机';
+    if (e.highlightShare > .18 && e.meanBrightness < 135) {
+      return '背景偏亮，点一下主体会更清晰';
+    }
+    if (e.highlightShare > .12 && e.shadowShare > .18) {
+      return '反差较大，可以换个角度';
+    }
+    return null;
+  }
+
   bool get _canUseCameraControls =>
       !coach.isDemo &&
       coach.initialized &&
@@ -563,6 +578,14 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                                     ),
                                   ),
                                   const SizedBox(height: 3),
+                                  CustomPaint(
+                                    size: const Size(58, 10),
+                                    painter: LevelGaugePainter(
+                                      angle: coach.level.angle,
+                                      level: !coach.level.needsLeveling,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
                                   Text(
                                     coach.level.label,
                                     style: TextStyle(
@@ -575,6 +598,41 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                                     ),
                                   ),
                                 ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (coach.countdownRemaining != null &&
+                      coach.phase == CapturePhase.ready)
+                    Container(
+                      key: const Key('countdown-overlay'),
+                      color: ink.withValues(alpha: .32),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '${coach.countdownRemaining}',
+                              style: const TextStyle(
+                                fontFamily: 'Editorial',
+                                fontSize: 72,
+                                color: acid,
+                                height: 1,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              '秒后拍照',
+                              style: TextStyle(fontSize: 13, color: paper),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '再点快门，停止拍照',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: paper.withValues(alpha: .75),
                               ),
                             ),
                           ],
@@ -697,6 +755,32 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
               ),
             ),
           content,
+          if (_sceneHint != null &&
+              coach.phase != CapturePhase.captured &&
+              coach.phase != CapturePhase.capturing)
+            Padding(
+              key: const Key('scene-hint'),
+              padding: const EdgeInsets.only(top: 7),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.wb_sunny_outlined,
+                    size: 12,
+                    color: Color(0xFFF4B66F),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _sceneHint!,
+                      style: const TextStyle(
+                        color: Color(0xFFF4B66F),
+                        fontSize: 10,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -805,6 +889,12 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
             maxLines: 2,
           ),
         ],
+        const SizedBox(height: 7),
+        _pill(
+          selected.evidenceLabel,
+          color: _evidenceColor(selected),
+          key: const Key('plan-evidence'),
+        ),
         const SizedBox(height: 13),
         Row(
           children: [
@@ -943,26 +1033,35 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
             _filterButton(),
           ],
         ),
-        const SizedBox(height: 10),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(3),
-          child: LinearProgressIndicator(
-            value: coach.alignment.progress,
-            minHeight: 3,
-            backgroundColor: const Color(0xFF2D352B),
-            color: acid,
-          ),
-        ),
+        // The hold progress is the ring around the shutter below.
         const SizedBox(height: 6),
-        Text(
-          ready
-              ? kIsWeb
-                    ? '点击快门，下载照片'
-                    : '点击快门，保存到相册'
-              : coach.plan?.useHorizon == true
-              ? '让横向分界对准虚线，稳住手机 1 秒'
-              : '让绿圈中心留在选框内，保持 1 秒',
-          style: const TextStyle(color: muted, fontSize: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                ready
+                    ? kIsWeb
+                          ? '点击快门，下载照片'
+                          : '点击快门，保存到相册'
+                    : coach.plan?.useHorizon == true
+                    ? '让横向分界对准虚线，稳住手机 1 秒'
+                    : '让绿圈中心留在选框内，保持 1 秒',
+                style: const TextStyle(color: muted, fontSize: 10),
+              ),
+            ),
+            if (!ready &&
+                !capture &&
+                coach.alignment.valid &&
+                coach.alignment.distance > 0)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Text(
+                  '还差 ${(coach.alignment.distance * 100).round()}%',
+                  key: const Key('align-distance'),
+                  style: const TextStyle(color: muted, fontSize: 10),
+                ),
+              ),
+          ],
         ),
         const SizedBox(height: 13),
         Row(
@@ -982,30 +1081,52 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
               button: true,
               label: '拍照',
               enabled: ready,
-              child: GestureDetector(
-                key: const Key('shutter'),
-                onTap: ready ? () => coach.takePhoto() : null,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 67,
-                  height: 67,
-                  padding: const EdgeInsets.all(5),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: ready ? acid : const Color(0xFF485042),
-                      width: 2,
-                    ),
+              child: SizedBox(
+                width: 81,
+                height: 81,
+                child: CustomPaint(
+                  painter: ShutterRingPainter(
+                    progress: coach.alignment.progress,
+                    ready: ready,
                   ),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: ready ? acid : const Color(0xFF333B2D),
-                    ),
-                    child: Icon(
-                      Icons.camera_alt_outlined,
-                      color: ready ? ink : muted,
-                      size: 22,
+                  child: Center(
+                    child: GestureDetector(
+                      key: const Key('shutter'),
+                      onTap: ready
+                          ? () {
+                              if (coach.countdownRemaining != null) {
+                                coach.cancelCountdown();
+                              } else if (coach.countdownSeconds == 0) {
+                                coach.takePhoto();
+                              } else {
+                                coach.startCountdown();
+                              }
+                            }
+                          : null,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        width: 67,
+                        height: 67,
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: ready ? acid : const Color(0xFF485042),
+                            width: 2,
+                          ),
+                        ),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: ready ? acid : const Color(0xFF333B2D),
+                          ),
+                          child: Icon(
+                            Icons.camera_alt_outlined,
+                            color: ready ? ink : muted,
+                            size: 22,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1013,8 +1134,28 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
             ),
             SizedBox(
               width: 90,
-              child: coach.isDemo
-                  ? TextButton(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton(
+                    key: const Key('countdown-toggle'),
+                    onPressed: capture ? null : coach.toggleCountdown,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 22),
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                    ),
+                    child: Text(
+                      coach.countdownSeconds == 0
+                          ? '定时 关'
+                          : '定时 ${coach.countdownSeconds}秒',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: coach.countdownSeconds == 0 ? muted : acid,
+                      ),
+                    ),
+                  ),
+                  if (coach.isDemo)
+                    TextButton(
                       key: const Key('demo-align'),
                       onPressed: capture ? null : coach.alignDemo,
                       child: const Text(
@@ -1022,13 +1163,16 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                         style: TextStyle(color: acid, fontSize: 12),
                       ),
                     )
-                  : TextButton(
+                  else
+                    TextButton(
                       onPressed: _showPhoto,
                       child: const Tooltip(
                         message: '查看最近照片',
                         child: Icon(Icons.photo_outlined, color: muted),
                       ),
                     ),
+                ],
+              ),
             ),
           ],
         ),
@@ -1093,6 +1237,14 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
           maxLines: 3,
         ),
       ],
+      if (coach.shotFeedback != null) ...[
+        const SizedBox(height: 6),
+        Text(
+          '这张 · ${coach.shotFeedback!.title} · 适合度 ${coach.shotFeedback!.score} · ${coach.shotFeedback!.evidence}',
+          key: const Key('shot-feedback'),
+          style: const TextStyle(color: muted, fontSize: 11),
+        ),
+      ],
       const SizedBox(height: 17),
       Row(
         children: [
@@ -1145,13 +1297,34 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       ),
     ),
   );
-  Widget _pill(String text, {Color color = muted}) => Container(
+  Widget _pill(String text, {Color color = muted, Key? key}) => Container(
+    key: key,
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
     decoration: BoxDecoration(
       borderRadius: BorderRadius.circular(5),
       border: Border.all(color: color.withValues(alpha: .3)),
     ),
     child: Text(text, style: TextStyle(fontSize: 10, color: color)),
+  );
+  Color _evidenceColor(CompositionPlan plan) => plan.score >= .65
+      ? acid
+      : plan.score >= .4
+      ? paper
+      : const Color(0xFFF4B66F);
+  Widget _scoreBar(CompositionPlan plan) => ClipRRect(
+    borderRadius: BorderRadius.circular(2),
+    child: SizedBox(
+      height: 3,
+      child: Stack(
+        children: [
+          Container(color: const Color(0xFF2A3128)),
+          FractionallySizedBox(
+            widthFactor: plan.score.clamp(0.05, 1.0),
+            child: Container(color: _evidenceColor(plan)),
+          ),
+        ],
+      ),
+    ),
   );
   Widget _glassLabel(String text, {IconData? icon}) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
@@ -1198,13 +1371,28 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                     p.kind.title,
                     style: const TextStyle(fontSize: 15),
                   ),
-                  subtitle: Text(
-                    p.reason,
-                    style: const TextStyle(
-                      color: muted,
-                      fontSize: 11,
-                      height: 1.6,
-                    ),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        p.reason,
+                        style: const TextStyle(
+                          color: muted,
+                          fontSize: 11,
+                          height: 1.6,
+                        ),
+                      ),
+                      const SizedBox(height: 7),
+                      _scoreBar(p),
+                      const SizedBox(height: 5),
+                      Text(
+                        p.evidenceLabel,
+                        style: TextStyle(
+                          color: _evidenceColor(p),
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
                   ),
                   trailing: _suitabilityScore(p, compact: true),
                   onTap: () {

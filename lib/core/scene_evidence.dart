@@ -19,6 +19,9 @@ class SceneEvidence {
     this.goldenBalance = 0,
     this.horizon = 0,
     this.horizonY = .5,
+    this.meanBrightness = 0,
+    this.highlightShare = 0,
+    this.shadowShare = 0,
   });
   final Point2? subject;
   final double? subjectArea;
@@ -32,7 +35,10 @@ class SceneEvidence {
       rightSpace,
       goldenBalance,
       horizon,
-      horizonY;
+      horizonY,
+      meanBrightness,
+      highlightShare,
+      shadowShare;
   final Point2 vanishingPoint;
 
   static SceneEvidence measure(
@@ -45,11 +51,14 @@ class SceneEvidence {
         gy = Float64List(w * h),
         edge = Float64List(w * h);
     double sum = 0, squares = 0, totalEdge = 0, vertical = 0;
+    int highlights = 0, shadows = 0;
     for (int y = 1; y < h - 1; y++) {
       for (int x = 1; x < w - 1; x++) {
         final i = y * w + x, value = f.at(x, y);
         sum += value;
         squares += value * value;
+        if (value >= 240) highlights++;
+        if (value <= 16) shadows++;
         gx[i] = f.at(x + 1, y) - f.at(x - 1, y);
         gy[i] = f.at(x, y + 1) - f.at(x, y - 1);
         edge[i] = math.sqrt(gx[i] * gx[i] + gy[i] * gy[i]);
@@ -209,6 +218,10 @@ class SceneEvidence {
           (1 - features.horizonAngle.abs() / 12).clamp(0.0, 1.0) *
           detail,
       horizonY: features.horizonY,
+      // Brightness distribution only; the advice wording lives in the UI layer.
+      meanBrightness: sum / count,
+      highlightShare: highlights / count,
+      shadowShare: shadows / count,
     );
   }
 }

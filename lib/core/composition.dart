@@ -210,11 +210,16 @@ class AlignmentResult {
     this.message,
     this.valid, {
     this.advice,
+    this.distance = 0,
   });
   final bool ready, valid;
   final double progress, accuracy;
   final String message;
   final String? advice;
+
+  /// Aspect-weighted frame distance still left between the subject box and the
+  /// plan target. Advisory magnitude for the hint text, never a gate.
+  final double distance;
 }
 
 /// Staying inside the visible subject box for one second decides readiness.
@@ -267,7 +272,14 @@ class AlignmentTracker {
         final target = plan.useHorizon ? '让横向分界靠近虚线' : '让白框靠近绿圈';
         message = dy > 0 ? '手机稍向上，$target' : '手机稍向下，$target';
       }
-      return AlignmentResult(false, 0, accuracy, message, true);
+      return AlignmentResult(
+        false,
+        0,
+        accuracy,
+        message,
+        true,
+        distance: error,
+      );
     }
     final advice = switch (plan.kind) {
       CompositionKind.symmetry when features.symmetry < .6 =>
@@ -299,6 +311,7 @@ class AlignmentTracker {
           : '已对齐，保持在框内…',
       true,
       advice: advice,
+      distance: error,
     );
   }
 }

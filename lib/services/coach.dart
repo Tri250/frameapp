@@ -155,6 +155,16 @@ class CameraCoach extends ChangeNotifier {
   Uint8List? _demoPixels, photo;
   ui.Offset demoPan = const ui.Offset(-.12, -.08);
   bool saved = false;
+
+  // Timed shutter: 0 keeps the immediate release. The countdown only delays
+  // the capture moment; readiness still gates it when the timer fires.
+  int countdownSeconds = 0;
+  int? countdownRemaining;
+  Timer? _countdownTimer;
+  bool _announcedHold = false;
+
+  /// Rule-based summary of the last capture for the review screen.
+  ({String title, String evidence, int score})? shotFeedback;
   PhotoFilter _photoFilter = const PhotoFilter();
   PhotoFilter get photoFilter => _photoFilter;
   bool get canChangePhotoFilter =>
@@ -626,6 +636,14 @@ class CameraCoach extends ChangeNotifier {
     if (!wasReady && alignment.ready && !isDemo) {
       HapticFeedback.mediumImpact();
     }
+    // One light tick when the box first settles into the target area; the full
+    // readiness impact above stays reserved for the completed one-second hold.
+    final holding =
+        alignment.valid && alignment.progress > 0 && !alignment.ready;
+    if (holding && !_announcedHold && !isDemo) {
+      HapticFeedback.selectionClick();
+    }
+    _announcedHold = holding;
   }
 
   void selectSubject(Point2 p) {
@@ -636,7 +654,9 @@ class CameraCoach extends ChangeNotifier {
       return;
     }
     _generation++;
+    final previous = subjectLock.position;
     subjectLock.select(_frame!, p);
+    _meterAt(p);
     features = features.withSubject(
       subjectLock.trackable ? subjectLock.position : null,
       subjectLock.trackable ? 1 : 0,
@@ -651,15 +671,48 @@ class CameraCoach extends ChangeNotifier {
         plan!.reason,
       );
     }
-    _alignment.reset();
-    if (phase == CapturePhase.ready) {
-      phase = CapturePhase.guiding;
+    // Re-tapping the already locked subject re-affirms it; only a tap that
+    // materially moves the selection restarts the stability hold.
+    if (previous == null || previous.distanceTo(p) > .03) {
+      _alignment.reset();
+      if (phase == CapturePhase.ready) {
+        phase = CapturePhase.guiding;
+      }
     }
     if (phase == CapturePhase.guiding) {
       _updateAlignment();
     }
     _notify();
     if (plan != null) _refreshPlansForSubject();
+  }
+
+  /// Tap-to-focus and metering follow the selected subject. Devices that reject
+  /// focus points keep working; subject tracking never depends on this request.
+  void _meterAt(Point2 p) {
+    final controller = camera;
+    if (isDemo || controller == null || !controller.value.isInitialized) {
+      return;
+    }
+    final x = controller.description.lensDirection == CameraLensDirection.front
+        ? 1 - p.x
+        : p.x;
+    unawaited(_setMetering(controller, ui.Offset(x, p.y)));
+  }
+
+  static Future<void> _setMetering(
+    CameraController controller,
+    ui.Offset point,
+  ) async {
+    try {
+      await controller.setFocusPoint(point);
+    } catch (_) {
+      // Not every lens supports a focus point; selection tracking still works.
+    }
+    try {
+      await controller.setExposurePoint(point);
+    } catch (_) {
+      // Metering stays automatic where the platform rejects the point.
+    }
   }
 
   Future<void> _refreshPlansForSubject() async {
@@ -688,11 +741,21 @@ class CameraCoach extends ChangeNotifier {
         selectedSubject: subjectLock.position,
         evidence: evidence,
       );
+      final previousPlan = plan;
       plan = phase == CapturePhase.recommending
           ? plans.first
           : plans.firstWhere((p) => p.kind == kind);
-      _alignment.reset();
-      if (phase == CapturePhase.ready) phase = CapturePhase.guiding;
+      // A refreshed plan that keeps the same visible target must not throw
+      // away the stability hold; only a materially moved target restarts it.
+      final shifted =
+          previousPlan == null ||
+          previousPlan.target.distanceTo(plan!.target) > .02 ||
+          previousPlan.horizonTarget != plan!.horizonTarget ||
+          previousPlan.useHorizon != plan!.useHorizon;
+      if (shifted) {
+        _alignment.reset();
+        if (phase == CapturePhase.ready) phase = CapturePhase.guiding;
+      }
       _notify();
     } catch (_) {
       // Keep the chosen method usable; never invent a new score after a failure.
@@ -732,6 +795,8 @@ class CameraCoach extends ChangeNotifier {
 
   void resetFraming() {
     _generation++;
+    cancelCountdown();
+    shotFeedback = null;
     phase = CapturePhase.framing;
     plans = [];
     plan = null;
@@ -780,12 +845,62 @@ class CameraCoach extends ChangeNotifier {
     }
   }
 
+  /// Cycles the timed shutter: off → 3s → 10s → off.
+  void toggleCountdown() {
+    if (disposed || countdownRemaining != null) return;
+    countdownSeconds = switch (countdownSeconds) {
+      0 => 3,
+      3 => 10,
+      _ => 0,
+    };
+    _notify();
+  }
+
+  /// Starts the countdown while ready. The timer fire still passes the normal
+  /// ready gate inside [takePhoto]; losing readiness stops the countdown.
+  void startCountdown() {
+    if (phase != CapturePhase.ready ||
+        countdownSeconds == 0 ||
+        countdownRemaining != null) {
+      return;
+    }
+    countdownRemaining = countdownSeconds;
+    _notify();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (disposed || phase != CapturePhase.ready || !alignment.ready) {
+        cancelCountdown();
+        _notify();
+        return;
+      }
+      final left = countdownRemaining! - 1;
+      if (left <= 0) {
+        timer.cancel();
+        _countdownTimer = null;
+        countdownRemaining = null;
+        unawaited(takePhoto());
+      } else {
+        countdownRemaining = left;
+        if (!isDemo) HapticFeedback.lightImpact();
+        _notify();
+      }
+    });
+  }
+
+  void cancelCountdown() {
+    if (countdownRemaining == null && _countdownTimer == null) return;
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+    countdownRemaining = null;
+    _notify();
+  }
+
   Future<void> takePhoto({bool overrideGuidance = false}) async {
     if (phase == CapturePhase.capturing ||
         phase == CapturePhase.captured ||
         !initialized) {
       return;
     }
+    cancelCountdown();
     if (!overrideGuidance &&
         (phase != CapturePhase.ready ||
             _lastFrame == null ||
@@ -837,6 +952,14 @@ class CameraCoach extends ChangeNotifier {
         return;
       }
       photo = captured;
+      final taken = plan;
+      shotFeedback = taken == null
+          ? null
+          : (
+              title: taken.kind.title,
+              evidence: taken.evidenceLabel,
+              score: (taken.score.clamp(0.0, 1.0) * 100).round(),
+            );
       phase = CapturePhase.captured;
       await retrySave(explicit: false);
     } catch (_) {
@@ -913,6 +1036,7 @@ class CameraCoach extends ChangeNotifier {
   Future<void> suspend() async {
     _session++;
     _generation++;
+    cancelCountdown();
     initialized = false;
     _demoTimer?.cancel();
     await _previewSubscription?.cancel();
@@ -968,6 +1092,7 @@ class CameraCoach extends ChangeNotifier {
     _demoTimer?.cancel();
     _previewSubscription?.cancel();
     _watchdog?.cancel();
+    _countdownTimer?.cancel();
     _levelSubscription?.cancel();
     camera?.dispose();
     demoImage?.dispose();

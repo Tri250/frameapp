@@ -450,8 +450,10 @@ class SubjectLock {
 
   void acceptTracking(SubjectTrackUpdate update) {
     if (!selected) return;
+    // The snapshot is kept either way so recovery can widen across consecutive
+    // misses; a miss never moves the position or replaces the reference.
+    tracking = update.snapshot;
     if (update.point != null && update.confidence >= .45) {
-      tracking = update.snapshot;
       position = update.point;
       state = SubjectState.tracking;
     } else {
