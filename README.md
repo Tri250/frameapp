@@ -10,7 +10,7 @@
 
 | 平台 | 下载入口 |
 | --- | --- |
-| Android | [下载原生体验 APK · 0.1.13](https://github.com/lianjiehao/frameapp/releases/download/v0.1.13-test.1/frame-android-0.1.13.apk) |
+| Android | [下载原生体验 APK · 0.1.14](https://github.com/lianjiehao/frameapp/releases/download/v0.1.14-test.1/frame-android-0.1.14.apk) |
 | iOS | 暂无公开安装渠道，开发者可在本机安装调试，或通过 App Store 发布。 |
 
 ## 快速开始

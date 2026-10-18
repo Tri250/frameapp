@@ -10,7 +10,7 @@ A Flutter composition camera for learning and research: select a subject, compar
 
 | Platform | Download |
 | --- | --- |
-| Android | [Download native preview APK · 0.1.13](https://github.com/lianjiehao/frameapp/releases/download/v0.1.13-test.1/frame-android-0.1.13.apk) |
+| Android | [Download native preview APK · 0.1.14](https://github.com/lianjiehao/frameapp/releases/download/v0.1.14-test.1/frame-android-0.1.14.apk) |
 | iOS | No public installation channel. Developers can install locally for debugging or distribute through the App Store. |
 
 ## Quick start

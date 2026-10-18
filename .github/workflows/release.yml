@@ -1,0 +1,110 @@
+name: Release
+
+# Builds the distributable Android test APK from a v* tag (or a manual run)
+# and publishes it as a GitHub release with SHA256 checksums. The release
+# keystore stays outside Git: it is injected from repository secrets and the
+# build fails explicitly instead of falling back to the debug signature.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FLUTTER_VERSION: '3.47.6'
+
+jobs:
+  android:
+    name: Android release
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: false
+      - name: Check release signing secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEYSTORE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_STORE_PASSWORD \
+                      ANDROID_KEYSTORE_KEY_ALIAS ANDROID_KEYSTORE_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing repository secret: $name"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo 'Configure the release keystore secrets (see docs/android-release.zh-CN.md); the release build never falls back to the debug keystore.'
+            exit 1
+          fi
+      - name: Restore release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEYSTORE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/frame-release.keystore"
+          cat > android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/frame-release.keystore
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter build apk --release
+      - name: Inspect final APK permissions and backup flag
+        run: python3 tools/check_android_permissions.py build/app/outputs/flutter-apk/app-release.apk
+      - name: Stage release artifacts
+        run: |
+          VERSION=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | cut -d+ -f1)
+          BUILD=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | cut -d+ -f2)
+          cp build/app/outputs/flutter-apk/app-release.apk "frame-android-$VERSION.apk"
+          sha256sum "frame-android-$VERSION.apk" > SHA256SUMS.txt
+          cat > release_notes.md <<EOF
+          Android 原生公开测试版，使用发布签名。版本 **$VERSION（$BUILD）**，最低 Android **7.0（API 24）**，包含 ARM 32 位、ARM 64 位与 x86_64。
+
+          下载附件 \`frame-android-$VERSION.apk\`，按系统提示允许浏览器或文件管理器安装。\`SHA256SUMS.txt\` 提供下载文件校验值。
+
+          - 使用真实相机；画面分析在设备内完成。
+          - 运营者：連接號；联系邮箱：ljhdev@foxmail.com。
+          - 相机与保存照片权限在使用对应功能时申请。
+          - 相同发布签名的更新可覆盖安装；卸载会清除应用本机设置和未保存内容。
+          - iOS 暂无公开安装包或 TestFlight。
+
+          这是测试版。自动化检查不能代替真机验证；请通过 [Issues](https://github.com/lianjiehao/frameapp/issues) 反馈首次授权与拒绝后重试、前后镜头方向、照片保存、后台恢复和不同设备兼容性问题。
+          EOF
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # A manual run has no tag yet: derive the release tag from pubspec.
+          TAG="$GITHUB_REF_NAME"
+          if [ "${GITHUB_REF_TYPE:-branch}" != "tag" ]; then
+            TAG="v$VERSION"
+          fi
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" --clobber "frame-android-$VERSION.apk" SHA256SUMS.txt
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --prerelease \
+              --title "FRAME $VERSION · Android 公开测试" \
+              --notes-file release_notes.md "frame-android-$VERSION.apk" SHA256SUMS.txt
+          fi
