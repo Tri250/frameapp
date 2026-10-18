@@ -8,6 +8,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag; defaults to v<pubspec version>-test.1'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -95,11 +100,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          # A manual run has no tag yet: derive the release tag from pubspec.
-          TAG="$GITHUB_REF_NAME"
+          # A manual run has no tag yet: default to the test-channel naming.
+          TAG="$INPUT_TAG"
+          if [ -z "$TAG" ]; then
+            TAG="$GITHUB_REF_NAME"
+          fi
           if [ "${GITHUB_REF_TYPE:-branch}" != "tag" ]; then
-            TAG="v$VERSION"
+            if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF_NAME" ]; then
+              TAG="v$VERSION-test.1"
+            fi
+            case "$TAG" in
+              v*) ;;
+              *) echo "Release tag must start with 'v': $TAG"; exit 1 ;;
+            esac
           fi
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" --clobber "frame-android-$VERSION.apk" SHA256SUMS.txt
