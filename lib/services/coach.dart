@@ -225,11 +225,18 @@ class CameraCoach extends ChangeNotifier {
           final codec = await ui.instantiateImageCodec(
             data.buffer.asUint8List(),
           );
-          demoImage = (await codec.getNextFrame()).image;
+          final image = (await codec.getNextFrame()).image;
           codec.dispose();
-          _demoPixels = (await demoImage!.toByteData(
+          final pixels = (await image.toByteData(
             format: ui.ImageByteFormat.rawRgba,
           ))!.buffer.asUint8List();
+          // A concurrent suspend()/dispose() must not leak the decoded image.
+          if (disposed || session != _session) {
+            image.dispose();
+            return;
+          }
+          demoImage = image;
+          _demoPixels = pixels;
         }
         if (disposed || session != _session) {
           return;
@@ -1047,6 +1054,8 @@ class CameraCoach extends ChangeNotifier {
     _levelFilter.reset();
     _lastLevel = null;
     _alignment.reset();
+    // The next controller starts with the platform default flash mode.
+    flash = FlashMode.off;
     if (phase == CapturePhase.ready ||
         phase == CapturePhase.guiding ||
         phase == CapturePhase.recommending ||
